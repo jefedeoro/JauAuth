@@ -77,6 +77,18 @@ pub struct BackendServer {
     /// TLS configuration for remote servers
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tls: Option<TlsConfig>,
+    /// Whether this server is enabled (tools visible and callable)
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Whether to auto-start this server on JauAuth launch
+    #[serde(default = "default_true")]
+    pub auto_start: bool,
+    /// Working directory for the server process
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub working_dir: Option<String>,
+    /// Delay in milliseconds before starting this server (for startup sequencing)
+    #[serde(default)]
+    pub startup_delay_ms: u64,
 }
 
 /// Server type

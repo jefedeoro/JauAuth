@@ -543,18 +543,18 @@ impl BackendManager {
     /// Start health monitoring for all backends
     pub async fn start_health_monitor(&self) {
         let backends = self.backends.clone();
-        
+
         tokio::spawn(async move {
             info!("Starting backend health monitor");
-            
+
             loop {
                 tokio::time::sleep(Duration::from_secs(30)).await;
-                
+
                 let mut backends = backends.write().await;
                 for (id, backend) in backends.iter_mut() {
                     let was_healthy = backend.is_healthy();
                     let is_healthy = backend.health_check().await;
-                    
+
                     if was_healthy && !is_healthy {
                         warn!("Backend {} became unhealthy", id);
                     } else if !was_healthy && is_healthy {
@@ -567,6 +567,59 @@ impl BackendManager {
                 }
             }
         });
+    }
+
+    /// Stop a specific backend by server ID
+    pub async fn stop_backend(&self, server_id: &str) -> Result<()> {
+        info!("Stopping backend: {}", server_id);
+
+        let mut backends = self.backends.write().await;
+        if let Some(backend) = backends.remove(server_id) {
+            backend.shutdown().await?;
+            info!("Backend {} stopped successfully", server_id);
+            Ok(())
+        } else {
+            Err(anyhow!("Backend '{}' not found", server_id))
+        }
+    }
+
+    /// Get tool count for a specific server
+    pub async fn get_server_tool_count(&self, server_id: &str) -> usize {
+        let backends = self.backends.read().await;
+        backends.get(server_id)
+            .map(|b| b.tools().len())
+            .unwrap_or(0)
+    }
+
+    /// Get tools for a specific server only
+    pub async fn get_server_tools(&self, server_id: &str) -> Vec<Value> {
+        let backends = self.backends.read().await;
+        backends.get(server_id)
+            .map(|b| b.tools().to_vec())
+            .unwrap_or_default()
+    }
+
+    /// Check if a server is enabled in the config
+    pub fn is_server_enabled(config: &crate::simple_router::RouterConfig, server_id: &str) -> bool {
+        config.servers.iter()
+            .find(|s| s.id == server_id)
+            .map(|s| s.enabled)
+            .unwrap_or(false)
+    }
+
+    /// Get all available tools from enabled backends only
+    pub async fn get_all_tools_filtered(&self, config: &crate::simple_router::RouterConfig) -> Vec<Value> {
+        let backends = self.backends.read().await;
+        let mut all_tools = Vec::new();
+
+        for (server_id, backend) in backends.iter() {
+            // Only include tools from enabled servers
+            if Self::is_server_enabled(config, server_id) && backend.is_healthy() {
+                all_tools.extend(backend.tools().to_vec());
+            }
+        }
+
+        all_tools
     }
 }
 

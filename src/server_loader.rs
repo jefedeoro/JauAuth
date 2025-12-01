@@ -64,6 +64,10 @@ pub async fn load_all_servers(
                 timeout_ms: db_server.timeout_ms as u64,
                 retry: None, // TODO: Support retry config in database
                 tls: None, // TODO: Support TLS config in database
+                enabled: db_server.enabled,
+                auto_start: true,
+                working_dir: None,
+                startup_delay_ms: 0,
             };
             
             // Validate before adding
@@ -125,13 +129,35 @@ async fn load_json_config(path: &str) -> Result<RouterConfig> {
 }
 
 /// Mask sensitive values showing only first 4 and last 4 characters
-fn mask_sensitive_value(value: &str) -> String {
+pub fn mask_sensitive_value(value: &str) -> String {
     if value.len() <= 8 {
         // Too short to mask properly
         "***".to_string()
     } else {
         format!("{}...{}", &value[..4], &value[value.len()-4..])
     }
+}
+
+/// Check if a value appears to be masked (for detecting when users send back masked values)
+/// Returns true if the value matches masking patterns:
+/// - "***" (short value mask)
+/// - "xxxx...yyyy" pattern (4+ chars, "...", 4+ chars)
+pub fn is_masked_value(value: &str) -> bool {
+    // Check for short mask
+    if value == "***" {
+        return true;
+    }
+
+    // Check for "xxxx...yyyy" pattern
+    if value.contains("...") {
+        let parts: Vec<&str> = value.split("...").collect();
+        if parts.len() == 2 {
+            // Both parts should have some characters (the masking uses 4 chars each side)
+            return parts[0].len() >= 1 && parts[1].len() >= 1;
+        }
+    }
+
+    false
 }
 
 /// Create a merged configuration for display (masks sensitive data)

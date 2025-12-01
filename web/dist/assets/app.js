@@ -216,28 +216,58 @@ class JauAuthDashboard {
         try {
             const servers = await this.apiCall('/api/dashboard/servers');
             this.servers = servers;
-            
+
             const container = document.getElementById('serverList');
             container.innerHTML = '';
-            
+
             if (servers.length === 0) {
                 container.innerHTML = '<p class="empty">No servers configured. Click "Add Server" to get started.</p>';
                 return;
             }
-            
+
             servers.forEach(server => {
+                const isEnabled = server.enabled !== false;
+                const isRunning = server.running || server.healthy;
                 const card = document.createElement('div');
-                card.className = 'server-card';
+                card.className = `server-card ${!isEnabled ? 'server-disabled' : ''}`;
                 card.innerHTML = `
+                    <div class="server-header">
+                        <label class="toggle-switch" title="${isEnabled ? 'Click to disable' : 'Click to enable'}">
+                            <input type="checkbox" ${isEnabled ? 'checked' : ''}
+                                   onchange="app.toggleServer('${server.id}', this.checked)">
+                            <span class="toggle-slider"></span>
+                        </label>
+                        <div class="server-status-badges">
+                            <span class="badge ${isEnabled ? 'badge-enabled' : 'badge-disabled'}">
+                                ${isEnabled ? '✓ Enabled' : '✗ Disabled'}
+                            </span>
+                            <span class="badge ${isRunning ? 'badge-running' : 'badge-stopped'}">
+                                ${isRunning ? '● Running' : '○ Stopped'}
+                            </span>
+                        </div>
+                    </div>
                     <div class="server-info">
                         <h4>${this.escapeHtml(server.name)}</h4>
                         <div class="server-meta">
                             <span>ID: ${this.escapeHtml(server.id)}</span>
                             <span>Tools: ${server.tool_count}</span>
                             <span>Sandbox: ${this.escapeHtml(server.sandbox_type)}</span>
+                            ${server.auto_start ? '<span class="auto-start">⚡ Auto-start</span>' : ''}
                         </div>
                     </div>
                     <div class="server-actions">
+                        ${isRunning ? `
+                            <button class="btn btn-sm btn-warning" onclick="app.stopServer('${server.id}')" ${!isEnabled ? 'disabled' : ''}>
+                                ⏹️ Stop
+                            </button>
+                            <button class="btn btn-sm btn-secondary" onclick="app.restartServer('${server.id}')" ${!isEnabled ? 'disabled' : ''}>
+                                🔄 Restart
+                            </button>
+                        ` : `
+                            <button class="btn btn-sm btn-success" onclick="app.startServer('${server.id}')" ${!isEnabled ? 'disabled' : ''}>
+                                ▶️ Start
+                            </button>
+                        `}
                         <button class="btn btn-sm btn-secondary" onclick="app.viewServerLogs('${server.id}')">
                             📋 Logs
                         </button>
@@ -557,22 +587,117 @@ class JauAuthDashboard {
         if (!confirm(`Are you sure you want to delete server "${serverId}"?`)) {
             return;
         }
-        
+
         const persistToConfig = confirm('Do you want to remove this server from the config file as well?');
-        
+
         try {
             await this.apiCall(`/api/dashboard/servers/${serverId}`, {
                 method: 'DELETE',
                 body: JSON.stringify({ persist_to_config: persistToConfig })
             });
-            
+
             this.loadServers();
-            this.showSuccess('Server deleted successfully');
+            this.showToast('Server deleted successfully', 'success');
         } catch (error) {
             console.error('Failed to delete server:', error);
+            this.showToast('Failed to delete server: ' + error.message, 'error');
         }
     }
-    
+
+    async toggleServer(serverId, enabled) {
+        try {
+            const response = await this.apiCall(`/api/dashboard/servers/${serverId}/toggle`, {
+                method: 'POST',
+                body: JSON.stringify({ enabled })
+            });
+
+            if (response.success) {
+                const action = enabled ? 'enabled' : 'disabled';
+                this.showToast(`Server "${serverId}" ${action}`, 'success');
+                this.loadServers();
+
+                // Also refresh tools if toolsModule is loaded
+                if (window.toolsModule) {
+                    await window.toolsModule.loadTools();
+                }
+            }
+        } catch (error) {
+            console.error('Failed to toggle server:', error);
+            this.showToast('Failed to toggle server: ' + error.message, 'error');
+            this.loadServers(); // Reload to revert checkbox state
+        }
+    }
+
+    async startServer(serverId) {
+        try {
+            this.showToast(`Starting server "${serverId}"...`, 'info');
+            const response = await this.apiCall(`/api/dashboard/servers/${serverId}/start`, {
+                method: 'POST'
+            });
+
+            if (response.success) {
+                this.showToast(`Server "${serverId}" started successfully`, 'success');
+                this.loadServers();
+
+                // Refresh tools
+                if (window.toolsModule) {
+                    await window.toolsModule.loadTools();
+                }
+            }
+        } catch (error) {
+            console.error('Failed to start server:', error);
+            this.showToast('Failed to start server: ' + error.message, 'error');
+        }
+    }
+
+    async stopServer(serverId) {
+        if (!confirm(`Are you sure you want to stop server "${serverId}"?`)) {
+            return;
+        }
+
+        try {
+            this.showToast(`Stopping server "${serverId}"...`, 'info');
+            const response = await this.apiCall(`/api/dashboard/servers/${serverId}/stop`, {
+                method: 'POST'
+            });
+
+            if (response.success) {
+                this.showToast(`Server "${serverId}" stopped`, 'success');
+                this.loadServers();
+
+                // Refresh tools
+                if (window.toolsModule) {
+                    await window.toolsModule.loadTools();
+                }
+            }
+        } catch (error) {
+            console.error('Failed to stop server:', error);
+            this.showToast('Failed to stop server: ' + error.message, 'error');
+        }
+    }
+
+    async restartServer(serverId) {
+        try {
+            this.showToast(`Restarting server "${serverId}"...`, 'info');
+            const response = await this.apiCall(`/api/dashboard/servers/${serverId}/restart`, {
+                method: 'POST'
+            });
+
+            if (response.success) {
+                this.showToast(`Server "${serverId}" restarted successfully`, 'success');
+                this.loadServers();
+
+                // Refresh tools
+                if (window.toolsModule) {
+                    await window.toolsModule.loadTools();
+                }
+            }
+        } catch (error) {
+            console.error('Failed to restart server:', error);
+            this.showToast('Failed to restart server: ' + error.message, 'error');
+        }
+    }
+
     async viewServerLogs(serverId) {
         try {
             const logs = await this.apiCall(`/api/dashboard/servers/${serverId}/logs`);

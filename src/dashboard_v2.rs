@@ -150,6 +150,10 @@ pub async fn add_server_v2(
         timeout_ms: 30000,
         retry: None,
         tls: None,
+        enabled: true,
+        auto_start: true,
+        working_dir: None,
+        startup_delay_ms: 0,
     };
     
     // Validate the server configuration
@@ -252,6 +256,10 @@ pub async fn update_server_v2(
         timeout_ms: 30000,
         retry: None,
         tls: None,
+        enabled: true,
+        auto_start: true,
+        working_dir: None,
+        startup_delay_ms: 0,
     };
     
     // Update in database if it exists there

@@ -1344,12 +1344,48 @@ node mcp-server/test-integration.js</code></pre>
                         
                         <div class="form-group" id="allowedUsersGroup">
                             <label for="allowedUsers">Allowed Users</label>
-                            <input type="text" id="allowedUsers" name="allowedUsers" 
+                            <input type="text" id="allowedUsers" name="allowedUsers"
                                    placeholder="user1, user2"
                                    oninput="serverModal.syncFormToJson()">
                             <small>Comma-separated list of usernames (empty = all users)</small>
                         </div>
-                        
+
+                        <h4>Launch Configuration</h4>
+
+                        <div class="form-group checkbox">
+                            <label>
+                                <input type="checkbox" id="serverEnabled" name="enabled" checked
+                                       onchange="serverModal.syncFormToJson()">
+                                Server Enabled
+                            </label>
+                            <small class="form-help">Disabled servers won't expose their tools</small>
+                        </div>
+
+                        <div class="form-group checkbox">
+                            <label>
+                                <input type="checkbox" id="autoStart" name="autoStart" checked
+                                       onchange="serverModal.syncFormToJson()">
+                                Auto-Start on JauAuth Launch
+                            </label>
+                            <small class="form-help">Automatically start this server when JauAuth starts</small>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="workingDir">Working Directory</label>
+                            <input type="text" id="workingDir" name="workingDir"
+                                   placeholder="/path/to/working/directory"
+                                   oninput="serverModal.syncFormToJson()">
+                            <small class="form-help">Directory to run the command from (optional)</small>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="startupDelay">Startup Delay (ms)</label>
+                            <input type="number" id="startupDelay" name="startupDelay"
+                                   value="0" min="0" step="100"
+                                   oninput="serverModal.syncFormToJson()">
+                            <small class="form-help">Wait time before starting (useful for startup sequencing)</small>
+                        </div>
+
                         <h4>Sandbox Configuration</h4>
                         
                         <div class="form-group">

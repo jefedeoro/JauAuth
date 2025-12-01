@@ -322,6 +322,10 @@ impl ServerStore {
             timeout_ms: decrypted.timeout_ms as u64,
             retry: None,
             tls: None,
+            enabled: decrypted.enabled,
+            auto_start: true,
+            working_dir: None,
+            startup_delay_ms: 0,
         })
     }
     

@@ -1662,3 +1662,157 @@ h4 {
 [data-theme="dark"] .form-help {
     color: var(--gray-400);
 }
+
+/* --- Server Toggle Switch --- */
+.toggle-switch {
+    position: relative;
+    display: inline-block;
+    width: 44px;
+    height: 24px;
+    flex-shrink: 0;
+}
+
+.toggle-switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.toggle-slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: var(--gray-300);
+    transition: 0.3s;
+    border-radius: 24px;
+}
+
+.toggle-slider:before {
+    position: absolute;
+    content: "";
+    height: 18px;
+    width: 18px;
+    left: 3px;
+    bottom: 3px;
+    background-color: white;
+    transition: 0.3s;
+    border-radius: 50%;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+}
+
+.toggle-switch input:checked + .toggle-slider {
+    background-color: var(--primary);
+}
+
+.toggle-switch input:checked + .toggle-slider:before {
+    transform: translateX(20px);
+}
+
+.toggle-switch input:disabled + .toggle-slider {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* --- Server Card Enhanced --- */
+.server-card {
+    flex-direction: column;
+    gap: var(--spacing-md);
+}
+
+.server-header {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-md);
+    width: 100%;
+}
+
+.server-status-badges {
+    display: flex;
+    gap: var(--spacing-sm);
+    margin-left: auto;
+}
+
+.badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border-radius: var(--radius-full);
+    font-size: var(--font-xs);
+    font-weight: 500;
+}
+
+.badge-enabled {
+    background: rgba(16, 185, 129, 0.1);
+    color: var(--success);
+}
+
+.badge-disabled {
+    background: rgba(156, 163, 175, 0.2);
+    color: var(--gray);
+}
+
+.badge-running {
+    background: rgba(59, 130, 246, 0.1);
+    color: var(--primary);
+}
+
+.badge-stopped {
+    background: rgba(239, 68, 68, 0.1);
+    color: var(--danger);
+}
+
+.server-disabled {
+    opacity: 0.6;
+}
+
+.server-disabled .server-info h4 {
+    color: var(--gray);
+}
+
+.auto-start {
+    color: var(--warning);
+    font-weight: 500;
+}
+
+/* Button variants */
+.btn-warning {
+    background: var(--warning);
+    color: white;
+}
+
+.btn-warning:hover {
+    background: #d97706;
+}
+
+.btn-success {
+    background: var(--success);
+    color: white;
+}
+
+.btn-success:hover {
+    background: #059669;
+}
+
+/* Dark mode adjustments */
+[data-theme="dark"] .toggle-slider {
+    background-color: var(--gray-600);
+}
+
+[data-theme="dark"] .badge-enabled {
+    background: rgba(16, 185, 129, 0.2);
+}
+
+[data-theme="dark"] .badge-disabled {
+    background: rgba(156, 163, 175, 0.3);
+}
+
+[data-theme="dark"] .badge-running {
+    background: rgba(59, 130, 246, 0.2);
+}
+
+[data-theme="dark"] .badge-stopped {
+    background: rgba(239, 68, 68, 0.2);
+}

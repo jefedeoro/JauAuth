@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::path::PathBuf;
 use tokio::sync::RwLock;
 use tokio::fs;
-use tracing::{info, error};
+use tracing::{info, error, warn};
 
 use crate::{
     AuthContext,
@@ -36,9 +36,12 @@ pub struct ServerStatus {
     pub id: String,
     pub name: String,
     pub healthy: bool,
+    pub enabled: bool,
     pub tool_count: usize,
     pub sandbox_type: String,
     pub uptime_seconds: Option<u64>,
+    pub auto_start: bool,
+    pub running: bool,
 }
 
 /// Dashboard overview
@@ -64,9 +67,21 @@ pub struct ServerRequest {
     pub sandbox: crate::sandbox::SandboxConfig,
     #[serde(default = "default_persist_to_config")]
     pub persist_to_config: bool,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default = "default_true")]
+    pub auto_start: bool,
+    #[serde(default)]
+    pub working_dir: Option<String>,
+    #[serde(default)]
+    pub startup_delay_ms: u64,
 }
 
 fn default_persist_to_config() -> bool {
+    true
+}
+
+fn default_true() -> bool {
     true
 }
 
@@ -159,12 +174,13 @@ pub async fn list_servers(
 ) -> Result<Json<Vec<ServerStatus>>, ApiError> {
     let config = state.router_config.read().await;
     let backend_status = state.backend_manager.get_status().await;
-    
+
     let mut servers = Vec::new();
-    
+
     for server in &config.servers {
         let healthy = backend_status.get(&server.id).copied().unwrap_or(false);
-        
+        let running = backend_status.contains_key(&server.id);
+
         // Get sandbox type string
         let sandbox_type = match &server.sandbox.strategy {
             crate::sandbox::SandboxStrategy::None => "None",
@@ -173,17 +189,23 @@ pub async fn list_servers(
             crate::sandbox::SandboxStrategy::Firejail { .. } => "Firejail",
             crate::sandbox::SandboxStrategy::Bubblewrap { .. } => "Bubblewrap",
         }.to_string();
-        
+
+        // Get tool count for this server
+        let tool_count = state.backend_manager.get_server_tool_count(&server.id).await;
+
         servers.push(ServerStatus {
             id: server.id.clone(),
             name: server.name.clone(),
             healthy,
-            tool_count: 0, // TODO: Get actual tool count per server
+            enabled: server.enabled,
+            tool_count,
             sandbox_type,
             uptime_seconds: None, // TODO: Track per-server uptime
+            auto_start: server.auto_start,
+            running,
         });
     }
-    
+
     Ok(Json(servers))
 }
 
@@ -242,6 +264,10 @@ pub async fn add_server(
         timeout_ms: 30000,
         retry: None,
         tls: None,
+        enabled: request.enabled,
+        auto_start: request.auto_start,
+        working_dir: request.working_dir.clone(),
+        startup_delay_ms: request.startup_delay_ms,
     };
     
     // Validate the server configuration
@@ -370,11 +396,54 @@ pub async fn update_server(
     Json(request): Json<ServerRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     info!("Updating server: {}", server_id);
-    
-    // For now, we'll remove and re-add
-    // TODO: Implement proper update with graceful restart
-    
-    // Build updated server first
+
+    // Track which env vars were preserved vs updated
+    let mut preserved_fields: Vec<String> = Vec::new();
+    let mut updated_fields: Vec<String> = Vec::new();
+
+    // Get original server config to preserve masked values
+    let original_env: std::collections::HashMap<String, String>;
+    {
+        let config = state.router_config.read().await;
+        let original_server = config.servers.iter().find(|s| s.id == server_id)
+            .ok_or_else(|| ApiError::not_found(
+                format!("Server '{}' not found", server_id),
+                "SERVER_NOT_FOUND"
+            ))?;
+        original_env = original_server.env.clone();
+    }
+
+    // Process env vars - preserve original values if masked value was sent back
+    let mut final_env = std::collections::HashMap::new();
+    for (key, new_value) in &request.env {
+        if crate::server_loader::is_masked_value(new_value) {
+            // This is a masked value - preserve the original
+            if let Some(original_value) = original_env.get(key) {
+                final_env.insert(key.clone(), original_value.clone());
+                preserved_fields.push(key.clone());
+                info!("Preserved masked env var: {}", key);
+            } else {
+                // Key doesn't exist in original - this is an error case
+                // but we'll skip it rather than fail
+                warn!("Masked value received for non-existent key: {}", key);
+            }
+        } else {
+            // New value provided - use it
+            final_env.insert(key.clone(), new_value.clone());
+            if original_env.get(key) != Some(new_value) {
+                updated_fields.push(key.clone());
+            }
+        }
+    }
+
+    // Also preserve any original env vars that weren't in the request
+    for (key, value) in &original_env {
+        if !final_env.contains_key(key) {
+            final_env.insert(key.clone(), value.clone());
+        }
+    }
+
+    // Build updated server with processed env
     let server = BackendServer {
         id: request.id.clone(),
         name: request.name,
@@ -384,34 +453,38 @@ pub async fn update_server(
         url: None,
         transport: crate::simple_router::TransportType::Sse,
         auth: None,
-        env: request.env,
+        env: final_env,
         requires_auth: request.requires_auth,
         allowed_users: request.allowed_users,
         sandbox: request.sandbox,
         timeout_ms: 30000,
         retry: None,
         tls: None,
+        enabled: request.enabled,
+        auto_start: request.auto_start,
+        working_dir: request.working_dir.clone(),
+        startup_delay_ms: request.startup_delay_ms,
     };
-    
+
     // Update config in a block to release lock before saving
     {
         let mut config = state.router_config.write().await;
-        
+
         // Find and remove old server
         let old_pos = config.servers.iter().position(|s| s.id == server_id)
             .ok_or_else(|| ApiError::not_found(
                 format!("Server '{}' not found", server_id),
                 "SERVER_NOT_FOUND"
             ))?;
-        
+
         config.servers.remove(old_pos);
-        
+
         // TODO: Shutdown old backend
-        
+
         // Add updated server
         config.servers.push(server.clone());
     } // Write lock dropped here
-    
+
     // Spawn new backend
     if let Err(e) = state.backend_manager.spawn_backend(server).await {
         error!("Failed to spawn updated backend: {}", e);
@@ -420,7 +493,7 @@ pub async fn update_server(
             "SPAWN_FAILED"
         ));
     }
-    
+
     // Persist config to file if requested
     if request.persist_to_config {
         if let Err(e) = save_config_to_file(&state).await {
@@ -428,10 +501,17 @@ pub async fn update_server(
             // Continue anyway - server is updated
         }
     }
-    
+
     Ok(Json(serde_json::json!({
         "success": true,
-        "server_id": request.id
+        "server_id": request.id,
+        "updated_fields": updated_fields,
+        "preserved_fields": preserved_fields,
+        "message": if !preserved_fields.is_empty() {
+            format!("Server updated. {} env var(s) preserved due to masking.", preserved_fields.len())
+        } else {
+            "Server updated successfully.".to_string()
+        }
     })))
 }
 
@@ -544,6 +624,169 @@ pub async fn get_server_logs(
     Ok(Json(vec![
         format!("Log functionality not yet implemented for server: {}", server_id)
     ]))
+}
+
+/// Request to toggle server enabled state
+#[derive(Debug, Deserialize)]
+pub struct ToggleRequest {
+    pub enabled: bool,
+}
+
+/// Toggle server enabled/disabled state
+pub async fn toggle_server(
+    Path(server_id): Path<String>,
+    State(state): State<DashboardState>,
+    Json(request): Json<ToggleRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    info!("Toggling server {} to enabled={}", server_id, request.enabled);
+
+    // Update in config
+    {
+        let mut config = state.router_config.write().await;
+        let server = config.servers.iter_mut()
+            .find(|s| s.id == server_id)
+            .ok_or_else(|| ApiError::not_found(
+                format!("Server '{}' not found", server_id),
+                "SERVER_NOT_FOUND"
+            ))?;
+        server.enabled = request.enabled;
+    }
+
+    // Persist to config file
+    if let Err(e) = save_config_to_file(&state).await {
+        error!("Failed to save config after toggle: {}", e);
+    }
+
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "server_id": server_id,
+        "enabled": request.enabled
+    })))
+}
+
+/// Start a server process
+pub async fn start_server(
+    Path(server_id): Path<String>,
+    State(state): State<DashboardState>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    info!("Starting server: {}", server_id);
+
+    // Get server config
+    let server = {
+        let config = state.router_config.read().await;
+        config.servers.iter()
+            .find(|s| s.id == server_id)
+            .cloned()
+            .ok_or_else(|| ApiError::not_found(
+                format!("Server '{}' not found", server_id),
+                "SERVER_NOT_FOUND"
+            ))?
+    };
+
+    // Check if already running
+    let status = state.backend_manager.get_status().await;
+    if status.contains_key(&server_id) {
+        return Err(ApiError::bad_request(
+            format!("Server '{}' is already running", server_id),
+            "ALREADY_RUNNING"
+        ));
+    }
+
+    // Spawn the backend
+    if let Err(e) = state.backend_manager.spawn_backend(server).await {
+        error!("Failed to start server: {}", e);
+        return Err(ApiError::internal(
+            format!("Failed to start server: {}", e),
+            "START_FAILED"
+        ));
+    }
+
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "server_id": server_id,
+        "message": "Server started successfully"
+    })))
+}
+
+/// Stop a server process
+pub async fn stop_server(
+    Path(server_id): Path<String>,
+    State(state): State<DashboardState>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    info!("Stopping server: {}", server_id);
+
+    // Check if running
+    let status = state.backend_manager.get_status().await;
+    if !status.contains_key(&server_id) {
+        return Err(ApiError::bad_request(
+            format!("Server '{}' is not running", server_id),
+            "NOT_RUNNING"
+        ));
+    }
+
+    // Stop the backend
+    if let Err(e) = state.backend_manager.stop_backend(&server_id).await {
+        error!("Failed to stop server: {}", e);
+        return Err(ApiError::internal(
+            format!("Failed to stop server: {}", e),
+            "STOP_FAILED"
+        ));
+    }
+
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "server_id": server_id,
+        "message": "Server stopped successfully"
+    })))
+}
+
+/// Restart a server process
+pub async fn restart_server(
+    Path(server_id): Path<String>,
+    State(state): State<DashboardState>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    info!("Restarting server: {}", server_id);
+
+    // Get server config
+    let server = {
+        let config = state.router_config.read().await;
+        config.servers.iter()
+            .find(|s| s.id == server_id)
+            .cloned()
+            .ok_or_else(|| ApiError::not_found(
+                format!("Server '{}' not found", server_id),
+                "SERVER_NOT_FOUND"
+            ))?
+    };
+
+    // Stop if running
+    let status = state.backend_manager.get_status().await;
+    if status.contains_key(&server_id) {
+        if let Err(e) = state.backend_manager.stop_backend(&server_id).await {
+            error!("Failed to stop server during restart: {}", e);
+            return Err(ApiError::internal(
+                format!("Failed to stop server: {}", e),
+                "STOP_FAILED"
+            ));
+        }
+        // Give it a moment to clean up
+        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+    }
+
+    // Start the backend
+    if let Err(e) = state.backend_manager.spawn_backend(server).await {
+        error!("Failed to start server during restart: {}", e);
+        return Err(ApiError::internal(
+            format!("Failed to start server: {}", e),
+            "START_FAILED"
+        ));
+    }
+
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "server_id": server_id,
+        "message": "Server restarted successfully"
+    })))
 }
 
 /// Get available tools from all servers

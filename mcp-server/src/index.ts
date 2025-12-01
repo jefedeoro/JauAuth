@@ -175,6 +175,18 @@ class JauAuthMCPServer {
           return await this.listServers();
         }
 
+        if (name === 'router_list_server_tools') {
+          return await this.listServerTools(args?.server_id);
+        }
+
+        if (name === 'router_get_tool_schema') {
+          return await this.getToolSchema(args?.tool_name);
+        }
+
+        if (name === 'router_search_tools') {
+          return await this.searchTools(args?.query, args?.server_id);
+        }
+
         // Route all other tools to the Rust backend
         // Convert first underscore back to colon for backend routing (server_id:tool_name)
         const backendToolName = name.replace('_', ':');
@@ -291,11 +303,61 @@ class JauAuthMCPServer {
 
       this.tools.set('router_list_servers', {
         name: 'router_list_servers',
-        description: 'List all configured backend servers',
+        description: 'List all configured backend servers with their status and tool counts',
         inputSchema: {
           type: 'object',
           properties: {},
           required: [],
+        },
+      });
+
+      // Progressive tool discovery tools
+      this.tools.set('router_list_server_tools', {
+        name: 'router_list_server_tools',
+        description: 'List all tools provided by a specific server (lazy loading for large tool sets)',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            server_id: {
+              type: 'string',
+              description: 'The ID of the server to get tools from'
+            }
+          },
+          required: ['server_id'],
+        },
+      });
+
+      this.tools.set('router_get_tool_schema', {
+        name: 'router_get_tool_schema',
+        description: 'Get the detailed input schema for a specific tool',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            tool_name: {
+              type: 'string',
+              description: 'The full tool name (e.g., jaumemory_remember or jaumemory:remember)'
+            }
+          },
+          required: ['tool_name'],
+        },
+      });
+
+      this.tools.set('router_search_tools', {
+        name: 'router_search_tools',
+        description: 'Search for tools across all servers by name or description',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            query: {
+              type: 'string',
+              description: 'Search query to match against tool names and descriptions'
+            },
+            server_id: {
+              type: 'string',
+              description: 'Optional: limit search to a specific server'
+            }
+          },
+          required: ['query'],
         },
       });
 
@@ -377,6 +439,121 @@ class JauAuthMCPServer {
           {
             type: 'text',
             text: 'Failed to list servers',
+          },
+        ],
+        isError: true,
+      };
+    }
+  }
+
+  private async listServerTools(serverId: string) {
+    if (!serverId) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: 'Error: server_id is required',
+          },
+        ],
+        isError: true,
+      };
+    }
+
+    try {
+      const response = await backend.get(`/api/mcp/servers/${serverId}/tools`);
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(response.data, null, 2),
+          },
+        ],
+      };
+    } catch (error: any) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Failed to list tools for server '${serverId}': ${error.response?.data?.error || error.message}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  }
+
+  private async getToolSchema(toolName: string) {
+    if (!toolName) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: 'Error: tool_name is required',
+          },
+        ],
+        isError: true,
+      };
+    }
+
+    // Normalize tool name (convert underscore to colon if needed)
+    const normalizedName = toolName.includes(':') ? toolName : toolName.replace('_', ':');
+
+    try {
+      const response = await backend.get(`/api/mcp/tools/${encodeURIComponent(normalizedName)}/schema`);
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(response.data, null, 2),
+          },
+        ],
+      };
+    } catch (error: any) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Failed to get schema for tool '${toolName}': ${error.response?.data?.error || error.message}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  }
+
+  private async searchTools(query: string, serverId?: string) {
+    if (!query) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: 'Error: query is required',
+          },
+        ],
+        isError: true,
+      };
+    }
+
+    try {
+      const params = new URLSearchParams({ q: query });
+      if (serverId) {
+        params.append('server_id', serverId);
+      }
+      const response = await backend.get(`/api/mcp/tools/search?${params.toString()}`);
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(response.data, null, 2),
+          },
+        ],
+      };
+    } catch (error: any) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Failed to search tools: ${error.response?.data?.error || error.message}`,
           },
         ],
         isError: true,
