@@ -127,9 +127,30 @@ impl BackendProcess {
                 // Try to parse as JSON-RPC response
                 if let Ok(response) = serde_json::from_str::<Value>(&line) {
                     // Check if it has an ID (not a notification)
-                    if let Some(id) = response.get("id").and_then(|v| v.as_u64()) {
+                    // Handle both numeric and string IDs per JSON-RPC spec
+                    let id_opt: Option<u64> = response.get("id").and_then(|v| {
+                        // Try as u64 first
+                        if let Some(n) = v.as_u64() {
+                            return Some(n);
+                        }
+                        // Try as i64 and convert if positive
+                        if let Some(n) = v.as_i64() {
+                            if n >= 0 {
+                                return Some(n as u64);
+                            }
+                        }
+                        // Try parsing string ID as u64
+                        if let Some(s) = v.as_str() {
+                            if let Ok(n) = s.parse::<u64>() {
+                                return Some(n);
+                            }
+                        }
+                        None
+                    });
+
+                    if let Some(id) = id_opt {
                         debug!("Received async response for request {}: {}", id, line.trim());
-                        
+
                         // Find and complete the pending request
                         let mut pending_guard = pending.write().await;
                         if let Some(sender) = pending_guard.remove(&id) {
@@ -141,12 +162,15 @@ impl BackendProcess {
                             } else {
                                 Err(anyhow!("Invalid response: no result or error"))
                             };
-                            
+
                             // Send the result (ignore if receiver dropped)
                             let _ = sender.send(result);
                         } else {
                             warn!("Received response for unknown request ID {}", id);
                         }
+                    } else if response.get("id").is_some() {
+                        // Log if we got an ID but couldn't parse it
+                        warn!("Could not parse response ID: {:?}", response.get("id"));
                     }
                 }
             }
