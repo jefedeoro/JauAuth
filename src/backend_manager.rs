@@ -126,6 +126,9 @@ impl BackendProcess {
                 
                 // Try to parse as JSON-RPC response
                 if let Ok(response) = serde_json::from_str::<Value>(&line) {
+                    // Log every response for debugging
+                    info!("Backend {} received: {}", server_id, line.trim());
+
                     // Check if it has an ID (not a notification)
                     // Handle both numeric and string IDs per JSON-RPC spec
                     let id_opt: Option<u64> = response.get("id").and_then(|v| {
@@ -149,11 +152,15 @@ impl BackendProcess {
                     });
 
                     if let Some(id) = id_opt {
-                        debug!("Received async response for request {}: {}", id, line.trim());
+                        info!("Matching response ID {} to pending request", id);
 
                         // Find and complete the pending request
                         let mut pending_guard = pending.write().await;
+                        let pending_ids: Vec<u64> = pending_guard.keys().cloned().collect();
+                        info!("Pending request IDs: {:?}", pending_ids);
+
                         if let Some(sender) = pending_guard.remove(&id) {
+                            info!("Found matching pending request for ID {}", id);
                             // Parse the response
                             let result = if let Some(error) = response.get("error") {
                                 Err(anyhow!("Backend error: {}", error))
@@ -204,7 +211,7 @@ impl BackendProcess {
             "params": params
         });
         
-        debug!("Sending async request to {}: {}", self.server.id, request);
+        info!("Sending request ID {} to {}: method={}", id, self.server.id, method);
         
         let request_str = format!("{}\n", request);
         {
